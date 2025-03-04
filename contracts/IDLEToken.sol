@@ -17,6 +17,15 @@ contract IDLEToken is ERC20, Ownable {
     /// @param cost Biaya dalam ETH untuk pembelian tersebut
     event TokensPurchased(address indexed buyer, uint256 amount, uint256 cost);
 
+    /// @notice Event untuk klaim token IDLE
+    /// @param claimer Alamat yang mengklaim token
+    /// @param amount Jumlah token yang diklaim
+    /// @param timestamp Waktu klaim
+    event TokensClaimed(address indexed claimer, uint256 amount, uint256 timestamp);
+
+    /// @notice Mapping untuk melacak waktu klaim terakhir tiap alamat
+    mapping(address => uint256) public lastClaimed;
+    
     /// @notice Constructor untuk menginisialisasi kontrak token IDLE
     /// @param initialOwner Pemilik awal token dan kontrak
     /// @param initialSupply Pasokan awal token (tanpa desimal)
@@ -55,5 +64,18 @@ contract IDLEToken is ERC20, Ownable {
     /// @notice Menarik saldo ETH yang terkumpul dalam kontrak ke alamat pemilik
     function withdraw() public onlyOwner {
         payable(owner()).transfer(address(this).balance);
+    }
+    
+    /// @notice Fungsi klaim token IDLE
+    /// Setiap wallet dapat mengklaim 100 token IDL per hari.
+    function claimTokens() public {
+        // Pastikan 1 hari telah berlalu sejak klaim terakhir
+        require(block.timestamp >= lastClaimed[msg.sender] + 1 days, "You can only claim once per day");
+
+        uint256 claimAmount = 100 * 10 ** decimals(); // 100 token IDL (dengan 18 desimal)
+        lastClaimed[msg.sender] = block.timestamp;
+        _mint(msg.sender, claimAmount);
+
+        emit TokensClaimed(msg.sender, claimAmount, block.timestamp);
     }
 }

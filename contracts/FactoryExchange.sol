@@ -3,12 +3,17 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
 
 contract FactoryExchange is Ownable {
+    uint256 public tokenPrice = 0.000001 ether; 
     uint256 public constant TOKEN_PER_IDLE = 20; // 1 IDLE = 20 token AI
     uint256 public constant MAX_SUPPLY_AI = 30000 * 10 ** 18; // Maksimal 30,000 token AI
     IERC20 public idleToken;
     address[] public allTokens;
+
+    // Hardcode: 1 ETH = 2000 USD, disimpan dalam 1e18 scale => 2000 * 1e18 = 2e21
+    uint256 public constant HARDCODED_ETH_TO_USD_1e18 = 2000 * 1e18;
 
     constructor(address initialOwner, address _idleToken) Ownable(initialOwner) {
         idleToken = IERC20(_idleToken);
@@ -37,6 +42,15 @@ contract FactoryExchange is Ownable {
 
     mapping(address => TokenInfo) public tokenDetails;
 
+    function convertWeiToUsd(uint256 weiAmount) public pure returns (uint256) {
+        // Rumus: USD (1e18) = (weiAmount * HARDCODED_ETH_TO_USD_1e18) / 1e18
+        // Jika weiAmount = 1e18 (1 ETH), maka:
+        //   USD = (1e18 * 2000e18) / 1e18 = 2000e18
+        //   artinya 2000 USD dalam skala 1e18
+        return (weiAmount * HARDCODED_ETH_TO_USD_1e18) / 1e18;
+    }
+
+
     function createToken(
         string memory name,
         string memory symbol,
@@ -51,12 +65,30 @@ contract FactoryExchange is Ownable {
 
         AIToken newToken = new AIToken(name, symbol, address(this));
 
-        uint256 initialPrice = 0.000001 ether;
+        uint256 tokenAmount = idleAmount * TOKEN_PER_IDLE;
+        
+        require(tokenAmount <= MAX_SUPPLY_AI, "Exceeds maximum supply of AI tokens");
 
-        uint256 tokenAmount = calculateTokensForIDLE(address(newToken), idleAmount);
         AIToken(address(newToken)).mint(msg.sender, tokenAmount);
+        
+        // Hitung total ETH (wei) yang setara IDLE user
+        // tokenPrice = 0.000001 ether => 1 IDLE => 0.000001 ETH
+        // => totalEthWei = idleAmount * 0.000001 ether
+        uint256 totalEthWei = idleAmount * tokenPrice;
 
-        userTokens[msg.sender] = address(newToken);
+        // Konversi totalEthWei ke USD (skala 1e18)
+        uint256 totalUsd1e18 = convertWeiToUsd(totalEthWei);
+
+        // Hitung harga awal per 1 AI token dalam USD (skala 1e18)
+        // initialPriceUsd1e18 = totalUsd1e18 / tokenAmount
+        uint256 initialPriceUsd1e18 = 0;
+        if (tokenAmount > 0) {
+            initialPriceUsd1e18 = totalUsd1e18 / tokenAmount;
+        }
+
+        // Simpan data token ke struct
+        // totalSupply disimpan sebagai "token utuh" => tokenAmount / 1e18
+        // Harga-harga (open, high, low, close) disimpan dalam 1e18 scale => mewakili USD
         tokenDetails[address(newToken)] = TokenInfo(
             name,
             symbol,
@@ -66,11 +98,13 @@ contract FactoryExchange is Ownable {
             iconUrl,
             description,
             behaviour,
-            initialPrice,
-            initialPrice,
-            initialPrice,
-            initialPrice
+            initialPriceUsd1e18, // openPrice (USD, 1e18)
+            initialPriceUsd1e18, // highPrice
+            initialPriceUsd1e18, // lowPrice
+            initialPriceUsd1e18  // closePrice
         );
+
+        // Tambahkan token baru ke array
         allTokens.push(address(newToken));
 
         emit TokenCreated(msg.sender, address(newToken), block.timestamp);
@@ -166,6 +200,47 @@ contract FactoryExchange is Ownable {
         }
         tokenInfo.closePrice = currentPrice;
     }
+    function getAllIssue() public view returns (TokenInfo[] memory, address[] memory, uint256[] memory) {
+        uint256 tokenCount = allTokens.length;
+        TokenInfo[] memory details = new TokenInfo[](tokenCount);
+        address[] memory tokenAddresses = new address[](tokenCount);
+        uint256[] memory ids = new uint256[](tokenCount);
+
+        for (uint256 i = 0; i < tokenCount; i++) {
+            address tokenAddress = allTokens[i];
+            details[i] = tokenDetails[tokenAddress];
+            tokenAddresses[i] = tokenAddress;
+            ids[i] = i + 1;
+        }
+
+        return (details, tokenAddresses, ids);
+    }
+
+    function allIssues() public view returns (string[][] memory) {
+        uint256 tokenCount = allTokens.length;
+        string[][] memory result = new string[][](tokenCount);
+
+        for (uint256 i = 0; i < tokenCount; i++) {
+            address tokenAddress = allTokens[i];
+            TokenInfo memory token = tokenDetails[tokenAddress];
+
+            string[] memory tokenData = new string[](9);
+            tokenData[0] = Strings.toString(i);
+            tokenData[1] = token.name;
+            tokenData[2] = Strings.toString(token.totalSupply);
+            tokenData[3] = token.symbol;
+            tokenData[4] = token.description;
+            tokenData[5] = token.iconUrl;
+            tokenData[6] = Strings.toString(token.createdAt);
+            tokenData[7] = "true"; // Adjust based on open/close condition if needed
+            tokenData[8] = Strings.toHexString(uint256(uint160(token.owner)), 20);
+
+            result[i] = tokenData;
+        }
+
+        return result;
+    }
+
 }
 
 contract AIToken is ERC20, Ownable {
